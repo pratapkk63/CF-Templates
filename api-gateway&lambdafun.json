@@ -1,0 +1,1686 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "TestEnv2 API STACK which will create API gateway, lambda function.",
+	"Parameters": {
+		"TestEnv2VPC": {
+			"Description": " VPC Id",
+			"Type": "String"
+		},
+		"LambdaFunctionName": {
+			"Description": " Name of lambda function",
+			"Type": "String"
+		},
+		"LambdaFunctionHandler": {
+			"Description": " Handler of lambda function",
+			"Type": "String"
+		},
+		"LambdaRoleARN": {
+			"Description": " ARN of the role to be attached to Lambda",
+			"Type": "String"
+		},
+		"LambdaS3Bucket": {
+			"Description": " S3 bucket where lamda code is saved",
+			"Type": "String"
+		},
+		"LambdaS3Key": {
+			"Description": " S3 key where lamda code is saved",
+			"Type": "String"
+		},
+		"PVTLambdaSubnet1aId": {
+			"Description": " Id of the pvt subnet 1a for lambda",
+			"Type": "String"
+		},
+		"PVTLambdaSubnet1bId": {
+			"Description": " Id of the pvt subnet 1b for lambda",
+			"Type": "String"
+		}
+	},
+	"Resources": {
+		"LambdaSecurityGroup": {
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupName": "Lambda-SG",
+				"GroupDescription": "Lambda-SG",
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"SecurityGroupIngress": [{
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22",
+					"CidrIp": "10.22.10.0/32"
+				}],
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Bastion-SG"
+				}]
+			}
+		},
+		"TestEnv2Lambda": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": {
+						"Ref": "LambdaS3Bucket"
+					},
+					"S3Key": {
+						"Ref": "LambdaS3Key"
+					}
+				},
+				"FunctionName": {
+					"Ref": "LambdaFunctionName"
+				},
+				"Handler": {
+					"Ref": "LambdaFunctionHandler"
+				},
+				"Role": {
+					"Ref": "LambdaRoleARN"
+				},
+				"Runtime": "go1.x",
+				"Timeout": "300",
+				"VpcConfig": {
+					"SecurityGroupIds": [{
+						"Ref": "LambdaSecurityGroup"
+					}],
+					"SubnetIds": [{
+						"Ref": "PVTLambdaSubnet1aId"
+					}, {
+						"Ref": "PVTLambdaSubnet1bId"
+					}]
+				}
+			}
+		},
+		"TestEnv2API": {
+			"Type": "AWS::ApiGateway::RestApi",
+			"Properties": {
+				"Name": "TestEnv2 API",
+				"Description": "API for kbyp",
+				"FailOnWarnings": true
+			}
+		},
+		"LambdaPermissions": {
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:invokeFunction",
+				"FunctionName": {
+					"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+				},
+				"Principal": "apigateway.amazonaws.com",
+				"SourceArn": {
+					"Fn::Join": ["", ["arn:aws:execute-api:ap-south-1:", {
+						"Ref": "AWS::AccountId"
+					}, ":", {
+						"Ref": "TestEnv2API"
+					}, "/*"]]
+				}
+			}
+		},
+		"ApiGatewayAccountWriteLogs": {
+			"Type": "AWS::ApiGateway::Account",
+			"Properties": {
+				"CloudWatchRoleArn": {
+					"Fn::GetAtt": ["ApiGatewayCloudWatchLogsRole", "Arn"]
+				}
+			}
+		},
+		"ApiGatewayCloudWatchLogsRole": {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version": "2012-10-17",
+					"Statement": [{
+						"Effect": "Allow",
+						"Principal": {
+							"Service": ["apigateway.amazonaws.com"]
+						},
+						"Action": ["sts:AssumeRole"]
+					}]
+				},
+				"Policies": [{
+					"PolicyName": "ApiGatewayLogsPolicy",
+					"PolicyDocument": {
+						"Version": "2012-10-17",
+						"Statement": [{
+							"Effect": "Allow",
+							"Action": [
+								"logs:CreateLogGroup",
+								"logs:CreateLogStream",
+								"logs:DescribeLogGroups",
+								"logs:DescribeLogStreams",
+								"logs:PutLogEvents",
+								"logs:GetLogEvents",
+								"logs:FilterLogEvents"
+							],
+							"Resource": "*"
+						}]
+					}
+				}]
+			}
+		},
+		"ApiIndicationsResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Fn::GetAtt": ["TestEnv2API", "RootResourceId"]
+				},
+				"PathPart": "indications"
+			}
+		},
+		"ApiSubIndicationsResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiIndicationsResource"
+				},
+				"PathPart": "indications"
+			}
+		},
+		"IndicationsGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+				"ResourceId": {
+					"Ref": "ApiSubIndicationsResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiRecbResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiIndicationsResource"
+				},
+				"PathPart": "recb"
+			}
+		},
+		"RecbPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+				"ResourceId": {
+					"Ref": "ApiRecbResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiLoanResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Fn::GetAtt": ["TestEnv2API", "RootResourceId"]
+				},
+				"PathPart": "loan"
+			}
+		},
+		"ApiLoanLaResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiLoanResource"
+				},
+				"PathPart": "la"
+			}
+		},
+		"LaGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiLoanLaResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Fn::GetAtt": ["TestEnv2API", "RootResourceId"]
+				},
+				"PathPart": "me"
+			}
+		},
+		"MeGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"MePutMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "PUT",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "PUT",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeBankResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "bank"
+			}
+		},
+		"MeBankGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeBankResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"MeBankPutMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "PUT",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "PUT",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeBankResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeEmailResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "email"
+			}
+		},
+		"MeEmailPutMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "PUT",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "PUT",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeEmailResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeLoanResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "loan"
+			}
+		},
+		"MeLoanGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeLoanResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"MeLoanPutMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "PUT",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "PUT",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeLoanResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeOTPResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "otp"
+			}
+		},
+		"MeOTPGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeOTPResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"MeOTPPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeOTPResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMePaymentResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "payment"
+			}
+		},
+		"MePaymentGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMePaymentResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeAddPaymentResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMePaymentResource"
+				},
+				"PathPart": "addpayments"
+			}
+		},
+		"MeAddPaymentPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeAddPaymentResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeCBResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMePaymentResource"
+				},
+				"PathPart": "cb"
+			}
+		},
+		"MeCBPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeCBResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeCBGatewayResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeCBResource"
+				},
+				"PathPart": "{gateway}"
+			}
+		},
+		"MeCBGatewayPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeCBGatewayResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeOrderResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMePaymentResource"
+				},
+				"PathPart": "order"
+			}
+		},
+		"MeOrderGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeOrderResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"MeOrderPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeOrderResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeUndoPaymentResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMePaymentResource"
+				},
+				"PathPart": "undopayments"
+			}
+		},
+		"MeUndoPaymentPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeUndoPaymentResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMePerfiosResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "perfios"
+			}
+		},
+		"MePerfiosGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMePerfiosResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeProfileResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeResource"
+				},
+				"PathPart": "profile"
+			}
+		},
+		"ApiMeProfileAddressResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeProfileResource"
+				},
+				"PathPart": "address"
+			}
+		},
+		"MeProfileAddressPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileAddressResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeProfileDocResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeProfileResource"
+				},
+				"PathPart": "doc"
+			}
+		},
+		"MeProfileDocPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileDocResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"MeProfileDocPutMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "PUT",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "PUT",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileDocResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeProfileDocAadhaarResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeProfileDocResource"
+				},
+				"PathPart": "aadhaar"
+			}
+		},
+		"MeProfileDocAadhaarPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileDocAadhaarResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeProfileEligibleResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeProfileResource"
+				},
+				"PathPart": "eligible"
+			}
+		},
+		"MeProfileEligiblePostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileEligibleResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeProfileEmploymentResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeProfileResource"
+				},
+				"PathPart": "employment"
+			}
+		},
+		"MeProfileEmploymentPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileEmploymentResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMeProfileReferenceResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMeProfileResource"
+				},
+				"PathPart": "reference"
+			}
+		},
+		"MeProfileReferencePostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMeProfileReferenceResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMiscResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Fn::GetAtt": ["TestEnv2API", "RootResourceId"]
+				},
+				"PathPart": "misc"
+			}
+		},
+		"ApiMiscBankResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMiscResource"
+				},
+				"PathPart": "bank"
+			}
+		},
+		"MiscBankGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMiscBankResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMiscCallLogResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMiscResource"
+				},
+				"PathPart": "calllog"
+			}
+		},
+		"MiscCallLogPutMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "PUT",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "PUT",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMiscCallLogResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMiscGetBalanceResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMiscResource"
+				},
+				"PathPart": "getBalance"
+			}
+		},
+		"MiscGetBalanceGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMiscGetBalanceResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMiscPincodeResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMiscResource"
+				},
+				"PathPart": "pincode"
+			}
+		},
+		"MiscPincodeGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMiscPincodeResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiMiscWidgetTokenResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Ref": "ApiMiscResource"
+				},
+				"PathPart": "widgettoken"
+			}
+		},
+		"MiscWidgetTokenPostMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "POST",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "POST",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiMiscWidgetTokenResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		},
+		"ApiProductsResource": {
+			"Type": "AWS::ApiGateway::Resource",
+			"Properties": {
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"ParentId": {
+					"Fn::GetAtt": ["TestEnv2API", "RootResourceId"]
+				},
+				"PathPart": "products"
+			}
+		},
+		"ProductsGetMethod": {
+			"DependsOn": "LambdaPermissions",
+			"Type": "AWS::ApiGateway::Method",
+			"Properties": {
+				"AuthorizationType": "NONE",
+				"HttpMethod": "GET",
+				"Integration": {
+					"Type": "AWS_PROXY",
+					"IntegrationHttpMethod": "GET",
+					"Uri": {
+						"Fn::Join": ["", ["arn:aws:apigateway:", {
+							"Ref": "AWS::Region"
+						}, ":lambda:path/2015-03-31/functions/", {
+							"Fn::GetAtt": ["TestEnv2Lambda", "Arn"]
+						}, "/invocations"]]
+					},
+					"IntegrationResponses": [{
+						"StatusCode": 200
+					}]
+				},
+
+				"ResourceId": {
+					"Ref": "ApiProductsResource"
+				},
+				"RestApiId": {
+					"Ref": "TestEnv2API"
+				},
+				"MethodResponses": [{
+					"ResponseModels": {
+						"application/json": "Empty"
+					},
+					"StatusCode": 200
+				}]
+			}
+		}
+	}
+}
