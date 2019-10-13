@@ -1,0 +1,541 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "AWS CloudFormation sample template that contains a single Lambda function behind an API Gateway",
+	"Parameters": {
+		"PrimaryCIDRforVPC": {
+			"Description": " The Primary IP address range can be used for VPC",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+		},
+		"SecondaryCIDRforVPC": {
+			"Description": " The Secondary IP address range can be used for VPC",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+		},
+		"CIDRPublicSubnet1a": {
+			"Description": " The IP address range can be used for subnet",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+		},
+		"CIDRPVTSubnet1a": {
+			"Description": " The IP address range can be used for subnet",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+		},
+		"CIDRPVTLambdaSubnet1a": {
+			"Description": " The IP address range can be used for subnet",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+		},
+		"CIDRPVTLambdaSubnet1b": {
+			"Description": " The IP address range can be used for subnet",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+		},
+		"AZsubnet1a": {
+			"Description": "The availability zones for subnet1",
+			"Type": "String",
+			"AllowedValues": [
+				"ap-south-1a",
+				"ap-south-1b"
+			],
+			"ConstraintDescription": "must select a valid AvailabilityZone."
+		},
+		"AZsubnet1b": {
+			"Description": "The availability zones for subnet2",
+			"Type": "String",
+			"AllowedValues": [
+				"ap-south-1a",
+				"ap-south-1b"
+			],
+			"ConstraintDescription": "must select a valid AvailabilityZone."
+		},
+		"TestEnv2BastionAmiId": {
+			"Description": "select the AMI Id for linux ec2-instance",
+			"Type": "AWS::EC2::Image::Id",
+			"ConstraintDescription": "select the ami id ."
+		},
+		"TestEnv2BastionInstanceType": {
+			"Description": "WebServer EC2 instance type",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid EC2 instance type."
+		},
+		"KeyName": {
+			"Description": "Key Pair name",
+			"Type": "AWS::EC2::KeyPair::KeyName"
+		},
+		"MasterInstanceType": {
+			"Description": "Master DB EC2 instance type",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid EC2 instance type."
+		},
+		"MasterAmiId": {
+			"Description": "select the AMI Id for linux ec2-instance",
+			"Type": "AWS::EC2::Image::Id",
+			"ConstraintDescription": "select the ami id ."
+		},
+		"MaxscaleInstanceType": {
+			"Description": "Master DB EC2 instance type",
+			"Type": "String",
+			"ConstraintDescription": "must be a valid EC2 instance type."
+		},
+		"MaxscaleAmiId": {
+			"Description": "select the AMI Id for linux ec2-instance",
+			"Type": "AWS::EC2::Image::Id",
+			"ConstraintDescription": "select the ami id ."
+		},
+	},
+	"Resources": {
+		"TestEnv2VPC": {
+			"Type": "AWS::EC2::VPC",
+			"Properties": {
+				"CidrBlock": {
+					"Ref": "PrimaryCIDRforVPC"
+				},
+				"EnableDnsSupport": "true",
+				"EnableDnsHostnames": "true",
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2VPC"
+				}]
+			}
+		},
+		"VPCSecondaryCIDRAssociation": {
+			"Type": "AWS::EC2::VPCCidrBlock",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"CidrBlock": {
+					"Ref": "SecondaryCIDRforVPC"
+				}
+			}
+		},
+		"PublicSubnet1a": {
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"AvailabilityZone": {
+					"Ref": "AZsubnet1a"
+				},
+				"CidrBlock": {
+					"Ref": "CIDRPublicSubnet1a"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Public-Subnet-1a"
+				}]
+			}
+		},
+		"PVTSubnet1a": {
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"AvailabilityZone": {
+					"Ref": "AZsubnet1a"
+				},
+				"CidrBlock": {
+					"Ref": "CIDRPVTSubnet1a"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-PVT-Subnet-1a"
+				}]
+			}
+		},
+		"PVTLambdaSubnet1a": {
+			"DependsOn": ["VPCSecondaryCIDRAssociation"],
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"AvailabilityZone": {
+					"Ref": "AZsubnet1a"
+				},
+				"CidrBlock": {
+					"Ref": "CIDRPVTLambdaSubnet1a"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-PVT-Lambda-Subnet-1a"
+				}]
+			}
+		},
+		"PVTLambdaSubnet1b": {
+			"DependsOn": ["VPCSecondaryCIDRAssociation"],
+			"Type": "AWS::EC2::Subnet",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"AvailabilityZone": {
+					"Ref": "AZsubnet1b"
+				},
+				"CidrBlock": {
+					"Ref": "CIDRPVTLambdaSubnet1b"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-PVT-Lambda-Subnet-1b"
+				}]
+			}
+		},
+		"TestEnv2IGW": {
+			"Type": "AWS::EC2::InternetGateway",
+			"Properties": {
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Internet-Gateway"
+				}]
+			}
+		},
+		"AttachGateway": {
+			"Type": "AWS::EC2::VPCGatewayAttachment",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"InternetGatewayId": {
+					"Ref": "TestEnv2IGW"
+				}
+			}
+		},
+		"PublicRT": {
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Public-RT"
+				}]
+			}
+		},
+		"PublicRoute": {
+			"Type": "AWS::EC2::Route",
+			"DependsOn": "AttachGateway",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PublicRT"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"GatewayId": {
+					"Ref": "TestEnv2IGW"
+				}
+			}
+		},
+		"PBSubnetRouteTableAssociation1a": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"SubnetId": {
+					"Ref": "PublicSubnet1a"
+				},
+				"RouteTableId": {
+					"Ref": "PublicRT"
+				}
+			}
+		},
+		"TestEnv2BastionEIP": {
+			"Type": "AWS::EC2::EIP",
+			"Properties": {
+				"Domain": "vpc"
+			}
+		},
+		"EIPAssociationforTestEnv2Bastion": {
+			"Type": "AWS::EC2::EIPAssociation",
+			"Properties": {
+				"EIP": {
+					"Ref": "TestEnv2BastionEIP"
+				},
+				"InstanceId": {
+					"Ref": "TestEnv2BastionEC2"
+				}
+			}
+		},
+		"NAT": {
+			"Type": "AWS::EC2::NatGateway",
+			"Properties": {
+				"AllocationId": "eipalloc-03d3e83a8ade85728",
+				"SubnetId": {
+					"Ref": "PublicSubnet1a"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-NAT"
+				}]
+			}
+		},
+		"PrivateRT": {
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-PVT-RT"
+				}]
+			}
+		},
+		"PrivateRoute": {
+			"Type": "AWS::EC2::Route",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PrivateRT"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"NatGatewayId": {
+					"Ref": "NAT"
+				}
+			}
+		},
+		"PvtSubnetRouteTableAssociation1a": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"SubnetId": {
+					"Ref": "PVTSubnet1a"
+				},
+				"RouteTableId": {
+					"Ref": "PrivateRT"
+				}
+			}
+		},
+		"PrivateLambdaRT": {
+			"Type": "AWS::EC2::RouteTable",
+			"Properties": {
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-PVT-Lambda-RT"
+				}]
+			}
+		},
+		"PrivateLambdaRoute": {
+			"Type": "AWS::EC2::Route",
+			"Properties": {
+				"RouteTableId": {
+					"Ref": "PrivateLambdaRT"
+				},
+				"DestinationCidrBlock": "0.0.0.0/0",
+				"NatGatewayId": {
+					"Ref": "NAT"
+				}
+			}
+		},
+		"PvtLambdaSubnetRouteTableAssociation1a": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"SubnetId": {
+					"Ref": "PVTLambdaSubnet1a"
+				},
+				"RouteTableId": {
+					"Ref": "PrivateLambdaRT"
+				}
+			}
+		},
+		"PvtLambdaSubnetRouteTableAssociation1b": {
+			"Type": "AWS::EC2::SubnetRouteTableAssociation",
+			"Properties": {
+				"SubnetId": {
+					"Ref": "PVTLambdaSubnet1b"
+				},
+				"RouteTableId": {
+					"Ref": "PrivateLambdaRT"
+				}
+			}
+		},
+		"TestEnv2BastionSecurityGroup": {
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupName": "TestEnv2Bastion-SG",
+				"GroupDescription": "TestEnv2Bastion-SG",
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"SecurityGroupIngress": [{
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22",
+					"CidrIp": "106.51.78.0/32"
+				}, {
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22",
+					"CidrIp": "127.10.10.0/32"
+				}],
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Bastion-SG"
+				}]
+			}
+		},
+		"DBSecurityGroup": {
+			"DependsOn": ["TestEnv2BastionSecurityGroup"],
+			"Type": "AWS::EC2::SecurityGroup",
+			"Properties": {
+				"GroupName": "DB-SG",
+				"GroupDescription": "DB-SG",
+				"VpcId": {
+					"Ref": "TestEnv2VPC"
+				},
+				"SecurityGroupIngress": [{
+					"IpProtocol": "tcp",
+					"FromPort": "22",
+					"ToPort": "22",
+					"SourceSecurityGroupId": {
+						"Ref": "TestEnv2BastionSecurityGroup"
+					}
+				}],
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-DB-SG"
+				}]
+			}
+		},
+		"TestEnv2BastionEC2": {
+			"Type": "AWS::EC2::Instance",
+			"Properties": {
+				"InstanceType": {
+					"Ref": "TestEnv2BastionInstanceType"
+				},
+				"ImageId": {
+					"Ref": "TestEnv2BastionAmiId"
+				},
+				"KeyName": {
+					"Ref": "KeyName"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Prod-TestEnv2Bastion"
+				}],
+				"BlockDeviceMappings": [{
+					"DeviceName": "/dev/sda1",
+					"Ebs": {
+						"VolumeType": "gp2",
+						"DeleteOnTermination": "true",
+						"VolumeSize": "30"
+					}
+				}],
+				"NetworkInterfaces": [{
+					"GroupSet": [{
+						"Ref": "TestEnv2BastionSecurityGroup"
+					}],
+					"AssociatePublicIpAddress": "true",
+					"DeviceIndex": "0",
+					"DeleteOnTermination": "true",
+					"SubnetId": {
+						"Ref": "PublicSubnet1a"
+					}
+				}]
+			}
+		},
+		"MasterEC2": {
+			"Type": "AWS::EC2::Instance",
+			"Properties": {
+				"InstanceType": {
+					"Ref": "MasterInstanceType"
+				},
+				"ImageId": {
+					"Ref": "MasterAmiId"
+				},
+				"KeyName": {
+					"Ref": "KeyName"
+				},
+				"Tags": [{
+					"Key": "Name",
+					"Value": "TestEnv2-Prod-Master"
+				}],
+				"BlockDeviceMappings": [{
+					"DeviceName": "/dev/sda1",
+					"Ebs": {
+						"VolumeType": "gp2",
+						"DeleteOnTermination": "true",
+						"VolumeSize": "30"
+					}
+				}, {
+					"DeviceName": "/dev/sdb",
+					"Ebs": {
+						"VolumeType": "gp2",
+						"DeleteOnTermination": "true",
+						"VolumeSize": "200"
+					}
+				}],
+				"NetworkInterfaces": [{
+					"GroupSet": [{
+						"Ref": "DBSecurityGroup"
+					}],
+					"AssociatePublicIpAddress": "false",
+					"DeviceIndex": "0",
+					"DeleteOnTermination": "true",
+					"SubnetId": {
+						"Ref": "PVTSubnet1a"
+					}
+				}]
+			}
+		}
+	},
+	"Outputs": {
+		"VPC": {
+			"Value": {
+				"Ref": "TestEnv2VPC"
+			},
+			"Description": "ID of VPC"
+		},
+		"PrivateSubnet1aId": {
+			"Value": {
+				"Ref": "PVTSubnet1a"
+			},
+			"Description": "Private-subnet-1a"
+		},
+		"PrivateLambdaSubnet1aId": {
+			"Value": {
+				"Ref": "PVTLambdaSubnet1a"
+			},
+			"Description": "ID of private lambda subnet1a"
+		},
+		"PrivateLambdaSubnet1bId": {
+			"Value": {
+				"Ref": "PVTLambdaSubnet1b"
+			},
+			"Description": "ID of private lambda subnet1b"
+		},
+		"PublicSubnet1aId": {
+			"Value": {
+				"Ref": "PublicSubnet1a"
+			},
+			"Description": "ID of Public Subnet 1a"
+		},
+		"TestEnv2BastionId": {
+			"Value": {
+				"Ref": "TestEnv2BastionEC2"
+			},
+			"Description": "TestEnv2Bastion Server ID"
+		},
+		"MasterId": {
+			"Value": {
+				"Ref": "MasterEC2"
+			},
+			"Description": "TestEnv2Bastion Server ID"
+		},
+		"TestEnv2BastionElasticIPId": {
+			"Value": {
+				"Ref": "TestEnv2BastionEIP"
+			},
+			"Description": "TestEnv2Bastion Server elastic IP"
+		},
+		"TestEnv2BastionSecurityGroupId": {
+			"Value": {
+				"Ref": "TestEnv2BastionSecurityGroup"
+			},
+			"Description": "TestEnv2Bastion Server Security Group"
+		}
+	}
+}
